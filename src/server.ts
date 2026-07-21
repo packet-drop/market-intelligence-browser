@@ -3,8 +3,10 @@ import { createApp } from './app';
 import logger from './config/logger';
 import env from './config/env';
 import { browserService } from './services/browser.service';
+import { seekingAlphaSessionService } from './services/seeking-alpha-session.service';
 
 export const startServer = async (): Promise<Server> => {
+  await seekingAlphaSessionService.initialize();
   const app = createApp();
 
   const server = app.listen(env.PORT, env.HOST, () => {

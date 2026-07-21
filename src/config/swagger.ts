@@ -24,6 +24,13 @@ const options = {
           bearerFormat: 'API key',
           description: 'Set the token to the SERVICE_API_KEY configured for this service.',
         },
+        sessionAdminBearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'Administrative API key',
+          description:
+            'Set the token to SEEKING_ALPHA_SESSION_ADMIN_KEY. This is not SERVICE_API_KEY.',
+        },
       },
       schemas: {
         Meta: {

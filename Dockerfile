@@ -39,8 +39,8 @@ COPY --from=builder /app/dist ./dist
 # Create non-root user
 RUN groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs nodejs \
-    && mkdir -p /ms-playwright \
-    && chown -R nodejs:nodejs /app /ms-playwright
+    && mkdir -p /ms-playwright /data \
+    && chown -R nodejs:nodejs /app /ms-playwright /data
 
 USER nodejs
 
