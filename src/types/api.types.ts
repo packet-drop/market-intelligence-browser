@@ -1,11 +1,10 @@
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
   meta: {
     count?: number;
     durationMs: number;
-    targetUrl?: string;
     timestamp: string;
   };
 }
@@ -24,4 +23,11 @@ export interface HealthResponse {
   uptime: number;
   environment: string;
   timestamp: string;
+}
+
+export interface BrowserSmokeResult {
+  browser: 'chromium';
+  launched: true;
+  headless: boolean;
+  version: string;
 }

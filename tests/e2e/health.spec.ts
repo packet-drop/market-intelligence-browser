@@ -41,6 +41,7 @@ test.describe('Swagger Documentation', () => {
     expect(data).toHaveProperty('info');
     expect(data).toHaveProperty('paths');
     expect(data.servers[0]).toHaveProperty('url', '/');
-    expect(data.info).toHaveProperty('title', 'Playwright Scraper API');
+    expect(data.info).toHaveProperty('title', 'Market Intelligence Browser API');
+    expect(data.components.securitySchemes).toHaveProperty('bearerAuth');
   });
 });

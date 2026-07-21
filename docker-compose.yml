@@ -12,6 +12,7 @@ services:
       PORT: 3000
       LOG_LEVEL: info
       PLAYWRIGHT_HEADLESS: "true"
+      SERVICE_API_KEY: ${SERVICE_API_KEY:?SERVICE_API_KEY must be set}
     env_file:
       - .env
     restart: unless-stopped

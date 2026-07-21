@@ -9,7 +9,7 @@ export const errorMiddleware = (
   req: Request,
   res: Response,
   _next: NextFunction
-) => {
+): Response => {
   logger.error('Error:', {
     name: error.name,
     message: error.message,

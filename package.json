@@ -1,7 +1,7 @@
 {
   "name": "playwright-with-nodejs",
   "version": "1.0.0",
-  "description": "Production-ready API for web scraping with Playwright and testing",
+  "description": "Authenticated browser automation foundation for market-intelligence workflows",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
@@ -15,7 +15,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build && playwright test",
     "test:headed": "playwright test --headed",
     "test:report": "playwright show-report",
     "docker:build": "docker build -t playwright-api:latest .",
@@ -26,7 +26,8 @@
   },
   "keywords": [
     "playwright",
-    "scraping",
+    "browser-automation",
+    "market-intelligence",
     "api",
     "express",
     "typescript",

@@ -1,9 +1,10 @@
+import { Server } from 'http';
 import { createApp } from './app';
 import logger from './config/logger';
 import env from './config/env';
 import { browserService } from './services/browser.service';
 
-export const startServer = async () => {
+export const startServer = async (): Promise<Server> => {
   const app = createApp();
 
   const server = app.listen(env.PORT, env.HOST, () => {
@@ -13,7 +14,7 @@ export const startServer = async () => {
   });
 
   // Graceful shutdown
-  const gracefulShutdown = async (signal: string) => {
+  const gracefulShutdown = async (signal: string): Promise<void> => {
     logger.info(`${signal} received, starting graceful shutdown...`);
 
     server.close(async () => {

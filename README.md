@@ -1,243 +1,112 @@
-![Railway](https://img.shields.io/badge/Railway-Supported-blue?logo=railway)
-![Docker](https://img.shields.io/badge/Docker-Supported-blue?logo=docker)
-![Node.js](https://img.shields.io/badge/Node.js-Supported-green?logo=node.js)
-![TypeScript](https://img.shields.io/badge/TypeScript-Supported-blue?logo=typescript)
-![Express](https://img.shields.io/badge/Express-Supported-yellow?logo=express)
+# Market Intelligence Browser
 
-# Playwright with Node.js
+A narrowly scoped Playwright service for authenticated browser automation used by investment-intelligence workflows. It is designed for deployment on Railway and is not a general-purpose URL browser or scraping proxy.
 
-Production-oriented API for scraping demo pages with Playwright, Express, TypeScript, and Swagger/OpenAPI documentation.
+This foundation milestone intentionally implements no Seeking Alpha login, session storage, selectors, or data extraction.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/playwright-with-nodejs?referralCode=asepsp&utm_medium=integration&utm_source=template&utm_campaign=generic)
+Architecture decisions are recorded in [`docs/adr`](docs/adr). See [ADR 0001: Secure service boundary](docs/adr/0001-secure-service-boundary.md) for the authentication and browser-capability boundaries.
 
-![](./img/docs.png)
+## Current API
 
-## Features
+| Method | Path | Authentication | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/health` | Public | Lightweight process health check |
+| `POST` | `/api/browser/smoke` | Bearer token | Launch and close Chromium without opening a page or navigating |
+| `GET` | `/docs` | Public | Swagger UI |
+| `GET` | `/openapi.json` | Public | OpenAPI document |
 
-- Express API with route, controller, service, middleware, and utility layers
-- Playwright Chromium scraping through a shared browser service
-- Swagger UI at `/docs` and OpenAPI JSON at `/openapi.json`
-- Zod request validation, Helmet, CORS, compression, and rate limiting
-- Winston structured logging
-- Jest unit tests and Playwright API/e2e tests
-- Docker image with Playwright browser dependency installation
+No endpoint accepts a caller-provided URL.
 
-## Requirements
+## Configuration
 
-- Node.js 20+
-- npm
-- Docker, optional for container deployment
-
-## Quick Start
+Copy `.env.example` to `.env` for local development:
 
 ```bash
-npm install
 cp .env.example .env
+```
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NODE_ENV` | `development` | `development`, `production`, or `test` |
+| `HOST` | `0.0.0.0` | Express bind host; preserves Railway container behavior |
+| `PORT` | `3000` | Express port; Railway may supply this value |
+| `SERVICE_API_KEY` | none | Bearer token for `/api/*`; required at production startup |
+| `LOG_LEVEL` | `info` | Structured Winston log level |
+| `CORS_ORIGIN` | `*` | Allowed origin, or a comma-separated list |
+| `PLAYWRIGHT_HEADLESS` | `true` | Whether Chromium launches headlessly |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window |
+| `RATE_LIMIT_MAX` | `60` | Requests allowed per window |
+
+Generate a long random value for `SERVICE_API_KEY`. Do not commit it or print it in logs. Production startup fails with a clear configuration error when it is missing.
+
+## Local development
+
+```bash
+npm ci
 npm run dev
 ```
 
-The API runs on `http://localhost:3000` by default.
-
-Useful URLs:
-
-- Root: `http://localhost:3000/` redirects to `/docs`
-- Health: `http://localhost:3000/health`
-- Swagger UI: `http://localhost:3000/docs`
-- OpenAPI JSON: `http://localhost:3000/openapi.json`
-
-## Scripts
+Call the protected smoke endpoint:
 
 ```bash
-npm run dev            # Start TypeScript dev server
-npm run build          # Compile src/ to dist/
-npm start              # Run compiled app
-npm run typecheck      # TypeScript check without emit
-npm run lint           # ESLint
-npm run format:check   # Prettier check
-npm test               # Jest tests
-npm run test:e2e       # Playwright API/e2e tests
-npm run docker:build   # Build Docker image
-npm run docker:compose # Start with Docker Compose
-npm run zip            # Build and create distribution zip
+curl -X POST http://localhost:3000/api/browser/smoke \
+  -H "Authorization: Bearer $SERVICE_API_KEY"
 ```
 
-## API Endpoints
-
-### Root
-
-```http
-GET /
-```
-
-Redirects to `/docs`.
-
-### Health
-
-```http
-GET /health
-```
-
-Returns service health, uptime, environment, and timestamp.
-
-### Scrape Test Sites
-
-```http
-GET /api/scrape/sites
-```
-
-Scrapes available test site links from `SCRAPER_BASE_URL`.
-
-### Scrape E-commerce Products
-
-```http
-GET /api/scrape/ecommerce/products?limit=10
-```
-
-Query parameters:
-
-- `limit`: integer from 1 to 50, default `10`
-
-### Run Scrape Task
-
-```http
-POST /api/scrape/run
-Content-Type: application/json
-
-{
-  "target": "ecommerce",
-  "limit": 10
-}
-```
-
-Supported targets:
-
-- `test-sites`
-- `ecommerce`
-
-### Run Smoke Test
-
-```http
-POST /api/tests/smoke
-Content-Type: application/json
-
-{
-  "target": "test-sites"
-}
-```
-
-## Response Format
-
-Success responses:
+A successful response uses the common response envelope:
 
 ```json
 {
   "success": true,
-  "data": {},
+  "data": {
+    "browser": "chromium",
+    "launched": true,
+    "headless": true,
+    "version": "..."
+  },
   "meta": {
     "durationMs": 123,
-    "timestamp": "2026-05-07T00:00:00.000Z"
+    "timestamp": "2026-07-20T00:00:00.000Z"
   }
 }
 ```
 
-Error responses:
+Missing or incorrect tokens return the same `401 Unauthorized` envelope and are never logged. Errors use the same envelope with `success: false`.
 
-```json
-{
-  "success": false,
-  "error": "Error message",
-  "meta": {
-    "durationMs": 12,
-    "timestamp": "2026-05-07T00:00:00.000Z"
-  }
-}
+## Validation commands
+
+```bash
+npm run build
+npm test
+npm run test:e2e
+npm run lint
+npm run typecheck
+npm run format:check
+npm audit --omit=dev
 ```
 
-## Project Structure
+The unit tests mock Playwright where appropriate. The e2e smoke test requires the matching Chromium revision to be installed (`npx playwright install chromium`) but does not require external network access while it runs.
+
+## Railway and container behavior
+
+- Express listens on `HOST` and `PORT`.
+- `/health` stays public for Railway health checks.
+- Production logs are structured JSON on stdout/stderr for Railway Deploy Logs; the service does not depend on container log files.
+- The Docker image installs the Chromium revision matching Playwright and runs as a non-root user.
+- Set `NODE_ENV=production` and `SERVICE_API_KEY` in Railway variables before deploying.
+
+## Scripts
 
 ```text
-playwright-with-nodejs/
-|-- src/
-|   |-- app.ts
-|   |-- index.ts
-|   |-- server.ts
-|   |-- scraper.ts
-|   |-- scraper.test.ts
-|   |-- config/
-|   |-- controllers/
-|   |-- middlewares/
-|   |-- routes/
-|   |-- schemas/
-|   |-- services/
-|   |-- types/
-|   `-- utils/
-|-- tests/
-|   `-- e2e/
-|-- docker/
-|   `-- entrypoint.sh
-|-- Dockerfile
-|-- docker-compose.yml
-|-- jest.config.js
-|-- playwright.config.ts
-|-- package.json
-|-- tsconfig.json
-`-- README.md
+npm run dev          Start the TypeScript development server
+npm run build        Compile TypeScript to dist/
+npm start            Run the compiled service
+npm test             Run Jest tests
+npm run test:e2e     Run Playwright API tests
+npm run lint         Run ESLint
+npm run typecheck    Type-check without emitting files
+npm run format:check Check formatting
 ```
-
-`dist/`, `coverage/`, `test-results/`, and `playwright-report/` are generated outputs.
-
-## Environment Variables
-
-| Variable                | Default                                                | Description                                                 |
-| ----------------------- | ------------------------------------------------------ | ----------------------------------------------------------- |
-| `NODE_ENV`              | `development`                                          | Runtime environment: `development`, `production`, or `test` |
-| `PORT`                  | `3000`                                                 | HTTP port                                                   |
-| `HOST`                  | `0.0.0.0`                                              | Bind host                                                   |
-| `LOG_LEVEL`             | `info`                                                 | Winston log level                                           |
-| `CORS_ORIGIN`           | `*`                                                    | Allowed CORS origin, comma-separated for multiple origins   |
-| `SCRAPER_BASE_URL`      | `https://webscraper.io/test-sites`                     | Test site source URL                                        |
-| `SCRAPER_ECOMMERCE_URL` | `https://webscraper.io/test-sites/e-commerce/allinone` | E-commerce source URL                                       |
-| `PLAYWRIGHT_HEADLESS`   | `true`                                                 | Browser headless mode                                       |
-| `PLAYWRIGHT_TIMEOUT_MS` | `30000`                                                | Playwright page/navigation timeout                          |
-| `SCRAPER_MAX_LIMIT`     | `50`                                                   | Maximum scrape limit used by configuration                  |
-| `RATE_LIMIT_WINDOW_MS`  | `60000`                                                | Rate limit window                                           |
-| `RATE_LIMIT_MAX`        | `60`                                                   | Max requests per rate limit window                          |
-
-## Docker
-
-Build and run:
-
-```bash
-npm run docker:build
-docker run -p 3000:3000 --env-file .env playwright-api:latest
-```
-
-Or use Compose:
-
-```bash
-npm run docker:compose
-```
-
-The Dockerfile uses Debian slim instead of Alpine so Playwright can install Chromium and OS dependencies more reliably. If `package-lock.json` exists, Docker uses `npm ci`; otherwise it falls back to `npm install`. For repeatable production builds, generate and commit `package-lock.json`.
-
-## Production Checklist
-
-- Set `NODE_ENV=production`
-- Configure `CORS_ORIGIN` instead of using `*`
-- Use `LOG_LEVEL=warn` or `error`
-- Commit `package-lock.json` for deterministic installs
-- Send logs to external storage in production
-- Put the service behind HTTPS/reverse proxy
-- Set CPU and memory limits for the container
-- Monitor `/health`
-- Validate target sites are reachable from the deployment environment
-
-## Notes
-
-- Scraping and e2e tests depend on external network access to `webscraper.io`.
-- Swagger uses a relative OpenAPI server URL (`/`) so the "Try it out" button calls the same origin used to open `/docs`.
-- Endpoint-level `headless` values are accepted by current schemas for compatibility, but browser mode is controlled by `PLAYWRIGHT_HEADLESS`.
-- `src/scraper.ts` is a legacy standalone scraper used by Jest tests; the main API uses the service/controller stack under `src/services` and `src/controllers`.
 
 ## License
 

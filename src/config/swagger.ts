@@ -4,16 +4,11 @@ const options = {
   definition: {
     openapi: '3.1.0',
     info: {
-      title: 'Playwright Scraper API',
+      title: 'Market Intelligence Browser API',
       version: '1.0.0',
-      description: 'Production-ready API for web scraping with Playwright and automated testing',
-      contact: {
-        name: 'API Support',
-        url: 'https://github.com',
-      },
-      license: {
-        name: 'MIT',
-      },
+      description:
+        'A narrowly scoped, authenticated browser automation service for investment-intelligence workflows.',
+      license: { name: 'MIT' },
     },
     servers: [
       {
@@ -22,13 +17,20 @@ const options = {
       },
     ],
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'API key',
+          description: 'Set the token to the SERVICE_API_KEY configured for this service.',
+        },
+      },
       schemas: {
         Meta: {
           type: 'object',
           properties: {
             count: { type: 'integer' },
             durationMs: { type: 'integer' },
-            targetUrl: { type: 'string' },
             timestamp: { type: 'string', format: 'date-time' },
           },
           required: ['durationMs', 'timestamp'],
@@ -40,6 +42,7 @@ const options = {
             error: { type: 'string' },
             meta: { $ref: '#/components/schemas/Meta' },
           },
+          required: ['success', 'error', 'meta'],
         },
         HealthResponse: {
           type: 'object',
@@ -49,51 +52,22 @@ const options = {
             environment: { type: 'string' },
             timestamp: { type: 'string', format: 'date-time' },
           },
+          required: ['status', 'uptime', 'environment', 'timestamp'],
         },
-        ScrapeSite: {
+        BrowserSmokeResult: {
           type: 'object',
           properties: {
-            title: { type: 'string' },
-            description: { type: 'string' },
-            url: { type: 'string', format: 'uri' },
+            browser: { type: 'string', enum: ['chromium'] },
+            launched: { type: 'boolean', enum: [true] },
+            headless: { type: 'boolean' },
+            version: { type: 'string' },
           },
-          required: ['title', 'url'],
-        },
-        Product: {
-          type: 'object',
-          properties: {
-            title: { type: 'string' },
-            price: { type: 'string' },
-            description: { type: 'string' },
-            rating: { type: 'string' },
-            url: { type: 'string', format: 'uri' },
-          },
-        },
-        SmokeTestCheck: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            passed: { type: 'boolean' },
-            error: { type: 'string' },
-          },
-        },
-        SmokeTestResult: {
-          type: 'object',
-          properties: {
-            target: { type: 'string', enum: ['test-sites', 'ecommerce'] },
-            passed: { type: 'boolean' },
-            checks: {
-              type: 'array',
-              items: { $ref: '#/components/schemas/SmokeTestCheck' },
-            },
-            durationMs: { type: 'integer' },
-            timestamp: { type: 'string', format: 'date-time' },
-          },
+          required: ['browser', 'launched', 'headless', 'version'],
         },
       },
     },
   },
-  apis: ['./src/routes/*.ts', './dist/routes/*.js', './dist/controllers/*.js'],
+  apis: ['./src/routes/*.ts', './dist/routes/*.js'],
 };
 
 export const swaggerSpec = swaggerJsdoc(options);
