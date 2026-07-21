@@ -1,35 +1,40 @@
 import { z } from 'zod';
 
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.coerce.number().default(3000),
-  HOST: z.string().default('0.0.0.0'),
-  LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-  CORS_ORIGIN: z.string().default('*'),
-  SCRAPER_BASE_URL: z.string().url().default('https://webscraper.io/test-sites'),
-  SCRAPER_ECOMMERCE_URL: z.string().url().default('https://webscraper.io/test-sites/e-commerce/allinone'),
-  PLAYWRIGHT_TIMEOUT_MS: z.coerce.number().default(30000),
-  SCRAPER_MAX_LIMIT: z.coerce.number().default(50),
-  PLAYWRIGHT_HEADLESS: z
-    .string()
-    .transform((v) => v === 'true' || v === '1')
-    .default('true'),
-  RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
-  RATE_LIMIT_MAX: z.coerce.number().default(60),
-});
+const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    PORT: z.coerce.number().default(3000),
+    HOST: z.string().default('0.0.0.0'),
+    LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+    CORS_ORIGIN: z.string().default('*'),
+    SERVICE_API_KEY: z.string().min(1).optional(),
+    PLAYWRIGHT_HEADLESS: z
+      .string()
+      .transform((v) => v === 'true' || v === '1')
+      .default('true'),
+    RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
+    RATE_LIMIT_MAX: z.coerce.number().default(60),
+  })
+  .superRefine((values, context) => {
+    if (values.NODE_ENV === 'production' && !values.SERVICE_API_KEY) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SERVICE_API_KEY'],
+        message: 'SERVICE_API_KEY is required when NODE_ENV=production',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 
-let env: Env;
+const parsedEnv = envSchema.safeParse(process.env);
 
-try {
-  env = envSchema.parse(process.env);
-} catch (error) {
-  if (error instanceof z.ZodError) {
-    console.error('Environment validation failed:', error.errors);
-    process.exit(1);
-  }
-  throw error;
+if (!parsedEnv.success) {
+  const messages = parsedEnv.error.errors
+    .map((issue) => `${issue.path.join('.') || 'environment'}: ${issue.message}`)
+    .join('; ');
+
+  throw new Error(`Environment validation failed: ${messages}`);
 }
 
-export default env;
+export default parsedEnv.data;

@@ -23,7 +23,8 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "moduleResolution": "node16",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true
   },
   "include": [
     "src/**/*"

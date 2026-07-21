@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import logger from '../config/logger';
 
-export const requestLoggerMiddleware = (req: Request, res: Response, next: NextFunction) => {
+export const requestLoggerMiddleware = (req: Request, res: Response, next: NextFunction): void => {
   const startTime = Date.now();
   res.locals.startTime = startTime;
 
