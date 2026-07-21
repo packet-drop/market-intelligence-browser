@@ -14,6 +14,10 @@ import {
 import { bearerAuthMiddleware } from './middlewares/bearer-auth.middleware';
 import healthRoutes from './routes/health.routes';
 import browserRoutes from './routes/browser.routes';
+import {
+  seekingAlphaSessionAdminRoutes,
+  seekingAlphaSessionRoutes,
+} from './routes/seeking-alpha-session.routes';
 
 export const createApp = (): express.Express => {
   const app = express();
@@ -58,9 +62,13 @@ export const createApp = (): express.Express => {
     })
   );
 
-  // All application API routes require bearer authentication.
+  // Session import uses its own short-lived administrative bearer boundary.
+  app.use('/api/admin/sources/seeking-alpha', seekingAlphaSessionAdminRoutes);
+
+  // All remaining application API routes require the service bearer token.
   app.use('/api', bearerAuthMiddleware);
   app.use('/api/browser', browserRoutes);
+  app.use('/api/sources/seeking-alpha', seekingAlphaSessionRoutes);
 
   // 404 handler
   app.use(notFoundMiddleware);

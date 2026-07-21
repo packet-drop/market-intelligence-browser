@@ -31,3 +31,25 @@ export interface BrowserSmokeResult {
   headless: boolean;
   version: string;
 }
+
+export type SeekingAlphaSessionState =
+  'VALID' | 'MISSING' | 'EXPIRED' | 'CHALLENGE_REQUIRED' | 'UNAVAILABLE';
+
+export interface SeekingAlphaSessionCheckResult {
+  state: SeekingAlphaSessionState;
+  checkedAt: string;
+  importedAt?: string;
+  lastVerifiedAt?: string;
+  reason?:
+    | 'SOURCE_DISABLED'
+    | 'SESSION_FILE_MISSING'
+    | 'LOGIN_REQUIRED'
+    | 'UPSTREAM_CHALLENGE'
+    | 'UPSTREAM_UNAVAILABLE'
+    | 'QUEUE_FULL'
+    | 'CIRCUIT_OPEN';
+}
+
+export interface SeekingAlphaSessionImportResult {
+  importedAt: string;
+}

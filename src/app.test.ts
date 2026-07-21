@@ -8,8 +8,18 @@ jest.mock('./services/browser.service', () => ({
   },
 }));
 
+jest.mock('./services/seeking-alpha-session.service', () => ({
+  seekingAlphaSessionService: {
+    initialize: jest.fn(),
+    checkSession: jest.fn(),
+    importSession: jest.fn(),
+  },
+}));
+
 import { createApp } from './app';
+import env from './config/env';
 import { browserService } from './services/browser.service';
+import { seekingAlphaSessionService } from './services/seeking-alpha-session.service';
 
 interface TestResponse {
   statusCode: number;
@@ -22,6 +32,12 @@ describe('service API foundation', () => {
   let port: number;
   const runSmokeCheck = browserService.runSmokeCheck as jest.MockedFunction<
     typeof browserService.runSmokeCheck
+  >;
+  const checkSession = seekingAlphaSessionService.checkSession as jest.MockedFunction<
+    typeof seekingAlphaSessionService.checkSession
+  >;
+  const importSession = seekingAlphaSessionService.importSession as jest.MockedFunction<
+    typeof seekingAlphaSessionService.importSession
   >;
 
   beforeAll((done) => {
@@ -37,6 +53,10 @@ describe('service API foundation', () => {
 
   beforeEach(() => {
     runSmokeCheck.mockReset();
+    checkSession.mockReset();
+    importSession.mockReset();
+    env.SEEKING_ALPHA_SESSION_IMPORT_ENABLED = false;
+    env.SEEKING_ALPHA_SESSION_ADMIN_KEY = undefined;
   });
 
   const request = (
@@ -144,5 +164,60 @@ describe('service API foundation', () => {
     );
     expect(runSmokeCheck).toHaveBeenCalledTimes(1);
     expect(runSmokeCheck).toHaveBeenCalledWith();
+  });
+
+  test('protects the Seeking Alpha session check with the service bearer token', async () => {
+    checkSession.mockResolvedValue({
+      state: 'MISSING',
+      checkedAt: '2026-07-21T00:00:00.000Z',
+      reason: 'SESSION_FILE_MISSING',
+    });
+
+    const unauthorized = await request('/api/sources/seeking-alpha/session/check', {
+      method: 'POST',
+    });
+    const authorized = await request('/api/sources/seeking-alpha/session/check', {
+      method: 'POST',
+      authorization: 'Bearer test-service-api-key',
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(authorized.statusCode).toBe(200);
+    expect(authorized.body).toEqual(
+      expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({ state: 'MISSING' }),
+      })
+    );
+    expect(checkSession).toHaveBeenCalledTimes(1);
+  });
+
+  test('uses a separate admin bearer and kill switch for session import', async () => {
+    const storageState = { cookies: [], origins: [] };
+    const disabled = await request('/api/admin/sources/seeking-alpha/session/import', {
+      method: 'POST',
+      authorization: 'Bearer test-admin-key',
+      body: storageState,
+    });
+    expect(disabled.statusCode).toBe(404);
+
+    env.SEEKING_ALPHA_SESSION_IMPORT_ENABLED = true;
+    env.SEEKING_ALPHA_SESSION_ADMIN_KEY = 'test-admin-key';
+    importSession.mockResolvedValue({ importedAt: '2026-07-21T00:00:00.000Z' });
+
+    const wrongBoundary = await request('/api/admin/sources/seeking-alpha/session/import', {
+      method: 'POST',
+      authorization: 'Bearer test-service-api-key',
+      body: storageState,
+    });
+    const imported = await request('/api/admin/sources/seeking-alpha/session/import', {
+      method: 'POST',
+      authorization: 'Bearer test-admin-key',
+      body: storageState,
+    });
+
+    expect(wrongBoundary.statusCode).toBe(401);
+    expect(imported.statusCode).toBe(201);
+    expect(importSession).toHaveBeenCalledWith(storageState);
   });
 });
