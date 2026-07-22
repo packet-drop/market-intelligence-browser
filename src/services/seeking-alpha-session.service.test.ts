@@ -96,6 +96,42 @@ describe('SeekingAlphaSessionService', () => {
     );
   });
 
+  test('preserves non-sensitive session timestamps when login is required', async () => {
+    await store.save({
+      storageState,
+      importedAt: '2026-07-21T00:00:00.000Z',
+      lastVerifiedAt: '2026-07-21T12:00:00.000Z',
+    });
+    const page = {
+      route: jest.fn().mockResolvedValue(undefined),
+      mainFrame: jest.fn().mockReturnValue({}),
+      goto: jest.fn().mockResolvedValue(undefined),
+      url: jest.fn().mockReturnValue('https://seekingalpha.com/account/login'),
+    };
+    const context = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    (chromium.launch as jest.Mock).mockResolvedValue({
+      newContext: jest.fn().mockResolvedValue(context),
+      close: jest.fn().mockResolvedValue(undefined),
+    });
+    const service = new SeekingAlphaSessionService(
+      store,
+      true,
+      new SerializedOperationQueue(10, 0)
+    );
+
+    await expect(service.checkSession()).resolves.toEqual(
+      expect.objectContaining({
+        state: 'EXPIRED',
+        reason: 'LOGIN_REQUIRED',
+        importedAt: '2026-07-21T00:00:00.000Z',
+        lastVerifiedAt: '2026-07-21T12:00:00.000Z',
+      })
+    );
+  });
+
   test('normalizes browser failures without returning sensitive error details', async () => {
     (chromium.launch as jest.Mock).mockRejectedValue(
       new Error('navigation failed with cookie=do-not-return')

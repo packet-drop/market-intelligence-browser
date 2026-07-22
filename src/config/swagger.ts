@@ -47,6 +47,7 @@ const options = {
           properties: {
             success: { type: 'boolean', enum: [false] },
             error: { type: 'string' },
+            code: { type: 'string' },
             meta: { $ref: '#/components/schemas/Meta' },
           },
           required: ['success', 'error', 'meta'],
@@ -70,6 +71,21 @@ const options = {
             version: { type: 'string' },
           },
           required: ['browser', 'launched', 'headless', 'version'],
+        },
+        SeekingAlphaQuantRatingResult: {
+          type: 'object',
+          properties: {
+            ticker: { type: 'string' },
+            rating: {
+              type: 'string',
+              enum: ['STRONG_SELL', 'SELL', 'HOLD', 'BUY', 'STRONG_BUY'],
+            },
+            score: { type: 'number', minimum: 1, maximum: 5 },
+            observedPrice: { type: 'number', exclusiveMinimum: 0 },
+            canonicalPath: { type: 'string' },
+            observedAt: { type: 'string', format: 'date-time' },
+          },
+          required: ['ticker', 'rating', 'score', 'observedPrice', 'canonicalPath', 'observedAt'],
         },
       },
     },

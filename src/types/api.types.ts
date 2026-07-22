@@ -2,6 +2,7 @@ export interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  code?: string;
   meta: {
     count?: number;
     durationMs: number;
@@ -12,6 +13,7 @@ export interface ApiResponse<T = unknown> {
 export interface ApiErrorResponse {
   success: false;
   error: string;
+  code?: string;
   meta: {
     durationMs: number;
     timestamp: string;
@@ -52,4 +54,15 @@ export interface SeekingAlphaSessionCheckResult {
 
 export interface SeekingAlphaSessionImportResult {
   importedAt: string;
+}
+
+export type SeekingAlphaQuantRating = 'STRONG_SELL' | 'SELL' | 'HOLD' | 'BUY' | 'STRONG_BUY';
+
+export interface SeekingAlphaQuantRatingResult {
+  ticker: string;
+  rating: SeekingAlphaQuantRating;
+  score: number;
+  observedPrice: number;
+  canonicalPath: string;
+  observedAt: string;
 }

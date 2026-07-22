@@ -5,14 +5,26 @@ import {
   SeekingAlphaSessionCheckResult,
   SeekingAlphaSessionImportResult,
 } from '../types/api.types';
+import {
+  ApprovedSeekingAlphaNavigation,
+  InterceptedNavigationState,
+  sessionCheckNavigation,
+} from './seeking-alpha-navigation';
+import {
+  SeekingAlphaOperationError,
+  SeekingAlphaSessionMetadata,
+} from './seeking-alpha-operation-error';
 import { PlaywrightStorageState, SeekingAlphaSessionStore } from './seeking-alpha-session-store';
 import { QueueFullError, SerializedOperationQueue } from './serialized-operation-queue';
 
-const VERIFY_URL = 'https://seekingalpha.com/account/edit_price_alerts?tab=history';
 const CIRCUIT_FAILURE_THRESHOLD = 3;
 const CIRCUIT_OPEN_MS = 15 * 60 * 1000;
 
-type InterceptedState = 'EXPIRED' | 'CHALLENGE_REQUIRED' | 'UNAVAILABLE';
+interface AuthenticatedOperationResult<T> {
+  value: T;
+  importedAt: string;
+  lastVerifiedAt: string;
+}
 
 const result = (
   state: SeekingAlphaSessionCheckResult['state'],
@@ -26,24 +38,6 @@ const result = (
   ...(reason ? { reason } : {}),
 });
 
-const classifyPath = (urlValue: string): InterceptedState | null => {
-  try {
-    const url = new URL(urlValue);
-    if (url.origin !== 'https://seekingalpha.com') return 'UNAVAILABLE';
-    if (url.pathname === '/account/login' || url.pathname.startsWith('/login')) return 'EXPIRED';
-    if (/captcha|challenge|verify/i.test(url.pathname)) return 'CHALLENGE_REQUIRED';
-    if (
-      url.pathname !== '/account/edit_price_alerts' ||
-      url.searchParams.get('tab') !== 'history'
-    ) {
-      return 'UNAVAILABLE';
-    }
-    return null;
-  } catch {
-    return 'UNAVAILABLE';
-  }
-};
-
 const pageRequiresChallenge = async (page: Page): Promise<boolean> => {
   const title = (await page.title()).toLowerCase();
   const body = (await page.locator('body').innerText({ timeout: 5000 })).toLowerCase();
@@ -54,6 +48,30 @@ const pageRequiresChallenge = async (page: Page): Promise<boolean> => {
 
 const pageRequiresLogin = async (page: Page): Promise<boolean> =>
   (await page.locator('input[type="password"]').count()) > 0;
+
+const interceptedError = (
+  state: InterceptedNavigationState,
+  metadata: SeekingAlphaSessionMetadata
+): SeekingAlphaOperationError => new SeekingAlphaOperationError(state, metadata);
+
+const checkResultForError = (error: SeekingAlphaOperationError): SeekingAlphaSessionCheckResult => {
+  switch (error.operationCode) {
+    case 'SOURCE_DISABLED':
+      return result('UNAVAILABLE', 'SOURCE_DISABLED');
+    case 'SESSION_MISSING':
+      return result('MISSING', 'SESSION_FILE_MISSING');
+    case 'SESSION_EXPIRED':
+      return result('EXPIRED', 'LOGIN_REQUIRED', error.sessionMetadata);
+    case 'CHALLENGE_REQUIRED':
+      return result('CHALLENGE_REQUIRED', 'UPSTREAM_CHALLENGE', error.sessionMetadata);
+    case 'QUEUE_FULL':
+      return result('UNAVAILABLE', 'QUEUE_FULL');
+    case 'CIRCUIT_OPEN':
+      return result('UNAVAILABLE', 'CIRCUIT_OPEN');
+    default:
+      return result('UNAVAILABLE', 'UPSTREAM_UNAVAILABLE');
+  }
+};
 
 export class SeekingAlphaSessionService {
   private consecutiveUpstreamFailures = 0;
@@ -83,19 +101,16 @@ export class SeekingAlphaSessionService {
     return this.queue.run(async () => {
       const importedAt = new Date().toISOString();
       await this.store?.save({ storageState, importedAt });
-      this.consecutiveUpstreamFailures = 0;
-      this.circuitOpenUntil = 0;
+      this.resetCircuit();
       logger.info({ message: 'Seeking Alpha session imported', importedAt });
       return { importedAt };
     });
   }
 
   async checkSession(): Promise<SeekingAlphaSessionCheckResult> {
-    if (!this.enabled || !this.store) return result('UNAVAILABLE', 'SOURCE_DISABLED');
-    if (Date.now() < this.circuitOpenUntil) return result('UNAVAILABLE', 'CIRCUIT_OPEN');
     if (this.inFlightCheck) return this.inFlightCheck;
 
-    const checking = this.runQueuedCheck();
+    const checking = this.runCheck();
     this.inFlightCheck = checking;
     void checking.then(
       () => {
@@ -108,85 +123,120 @@ export class SeekingAlphaSessionService {
     return checking;
   }
 
-  private async runQueuedCheck(): Promise<SeekingAlphaSessionCheckResult> {
+  async runAuthenticatedOperation<T>(
+    navigation: ApprovedSeekingAlphaNavigation,
+    operation: (page: Page) => Promise<T>
+  ): Promise<T> {
+    const completed = await this.runQueuedOperation(navigation, operation);
+    return completed.value;
+  }
+
+  private async runCheck(): Promise<SeekingAlphaSessionCheckResult> {
     try {
-      return await this.queue.run(async () => this.performCheck());
+      const checked = await this.runQueuedOperation(sessionCheckNavigation, async () => undefined);
+      return result('VALID', undefined, checked);
     } catch (error) {
-      if (error instanceof QueueFullError) return result('UNAVAILABLE', 'QUEUE_FULL');
-      this.recordUpstreamFailure();
+      if (error instanceof SeekingAlphaOperationError) return checkResultForError(error);
       logger.error({ message: 'Seeking Alpha session check unavailable' });
       return result('UNAVAILABLE', 'UPSTREAM_UNAVAILABLE');
     }
   }
 
-  private async performCheck(): Promise<SeekingAlphaSessionCheckResult> {
-    const session = await this.store?.load();
-    if (!session) return result('MISSING', 'SESSION_FILE_MISSING');
+  private async runQueuedOperation<T>(
+    navigation: ApprovedSeekingAlphaNavigation,
+    operation: (page: Page) => Promise<T>
+  ): Promise<AuthenticatedOperationResult<T>> {
+    if (!this.enabled || !this.store) throw new SeekingAlphaOperationError('SOURCE_DISABLED');
+    if (Date.now() < this.circuitOpenUntil) throw new SeekingAlphaOperationError('CIRCUIT_OPEN');
 
-    const browser = await chromium.launch({ headless: env.PLAYWRIGHT_HEADLESS });
     try {
-      const context = await browser.newContext({ storageState: session.storageState });
-      try {
-        const page = await context.newPage();
-        let interceptedState: InterceptedState | null = null;
-
-        await page.route('**/*', async (route) => {
-          const request = route.request();
-          if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-            const classification = classifyPath(request.url());
-            if (classification) {
-              interceptedState = classification;
-              await route.abort('blockedbyclient');
-              return;
-            }
-          }
-          await route.continue();
-        });
-
-        try {
-          await page.goto(VERIFY_URL, {
-            waitUntil: 'domcontentloaded',
-            timeout: env.SEEKING_ALPHA_NAVIGATION_TIMEOUT_MS,
-          });
-        } catch {
-          if (interceptedState === 'EXPIRED') {
-            this.consecutiveUpstreamFailures = 0;
-            return result('EXPIRED', 'LOGIN_REQUIRED', session);
-          }
-          if (interceptedState === 'CHALLENGE_REQUIRED') {
-            this.consecutiveUpstreamFailures = 0;
-            return result('CHALLENGE_REQUIRED', 'UPSTREAM_CHALLENGE', session);
-          }
-          throw new Error('Verification navigation failed');
-        }
-
-        const finalClassification = classifyPath(page.url());
-        if (finalClassification === 'EXPIRED' || (await pageRequiresLogin(page))) {
-          this.consecutiveUpstreamFailures = 0;
-          return result('EXPIRED', 'LOGIN_REQUIRED', session);
-        }
-        if (finalClassification === 'CHALLENGE_REQUIRED' || (await pageRequiresChallenge(page))) {
-          this.consecutiveUpstreamFailures = 0;
-          return result('CHALLENGE_REQUIRED', 'UPSTREAM_CHALLENGE', session);
-        }
-        if (finalClassification === 'UNAVAILABLE') {
-          throw new Error('Verification destination was not approved');
-        }
-
-        const lastVerifiedAt = new Date().toISOString();
-        await this.store?.save({
-          storageState: await context.storageState(),
-          importedAt: session.importedAt,
-          lastVerifiedAt,
-        });
-        this.consecutiveUpstreamFailures = 0;
-        return result('VALID', undefined, { importedAt: session.importedAt, lastVerifiedAt });
-      } finally {
-        await context.close();
-      }
-    } finally {
-      await browser.close();
+      return await this.queue.run(async () => this.performOperation(navigation, operation));
+    } catch (error) {
+      if (error instanceof QueueFullError) throw new SeekingAlphaOperationError('QUEUE_FULL');
+      throw error;
     }
+  }
+
+  private async performOperation<T>(
+    navigation: ApprovedSeekingAlphaNavigation,
+    operation: (page: Page) => Promise<T>
+  ): Promise<AuthenticatedOperationResult<T>> {
+    try {
+      const session = await this.store?.load();
+      if (!session) {
+        this.resetCircuit();
+        throw new SeekingAlphaOperationError('SESSION_MISSING');
+      }
+
+      const browser = await chromium.launch({ headless: env.PLAYWRIGHT_HEADLESS });
+      try {
+        const context = await browser.newContext({ storageState: session.storageState });
+        try {
+          const page = await context.newPage();
+          let interceptedState: InterceptedNavigationState | null = null;
+
+          await page.route('**/*', async (route) => {
+            const request = route.request();
+            if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+              const classification = navigation.classify(request.url());
+              if (classification) {
+                interceptedState = classification;
+                await route.abort('blockedbyclient');
+                return;
+              }
+            }
+            await route.continue();
+          });
+
+          try {
+            await page.goto(navigation.url, {
+              waitUntil: 'domcontentloaded',
+              timeout: env.SEEKING_ALPHA_NAVIGATION_TIMEOUT_MS,
+            });
+          } catch {
+            if (interceptedState) throw interceptedError(interceptedState, session);
+            throw new Error('Approved Seeking Alpha navigation failed');
+          }
+
+          const finalClassification = navigation.classify(page.url());
+          if (finalClassification) throw interceptedError(finalClassification, session);
+          if (await pageRequiresLogin(page)) {
+            throw new SeekingAlphaOperationError('SESSION_EXPIRED', session);
+          }
+          if (await pageRequiresChallenge(page)) {
+            throw new SeekingAlphaOperationError('CHALLENGE_REQUIRED', session);
+          }
+
+          const value = await operation(page);
+          const lastVerifiedAt = new Date().toISOString();
+          await this.store?.save({
+            storageState: await context.storageState(),
+            importedAt: session.importedAt,
+            lastVerifiedAt,
+          });
+          this.resetCircuit();
+          return { value, importedAt: session.importedAt, lastVerifiedAt };
+        } finally {
+          await context.close();
+        }
+      } finally {
+        await browser.close();
+      }
+    } catch (error) {
+      if (error instanceof SeekingAlphaOperationError) {
+        if (error.operationCode === 'UPSTREAM_UNAVAILABLE') this.recordUpstreamFailure();
+        else this.resetCircuit();
+        throw error;
+      }
+      this.recordUpstreamFailure();
+      logger.error({ message: 'Seeking Alpha operation unavailable' });
+      throw new SeekingAlphaOperationError('UPSTREAM_UNAVAILABLE');
+    }
+  }
+
+  private resetCircuit(): void {
+    this.consecutiveUpstreamFailures = 0;
+    this.circuitOpenUntil = 0;
   }
 
   private recordUpstreamFailure(): void {
