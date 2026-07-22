@@ -1,9 +1,11 @@
 import { Page } from 'playwright';
 import env from '../config/env';
+import logger from '../config/logger';
 import { SeekingAlphaQuantRating, SeekingAlphaQuantRatingResult } from '../types/api.types';
 import { quantRatingNavigation } from './seeking-alpha-navigation';
 import { SeekingAlphaOperationError } from './seeking-alpha-operation-error';
 import {
+  pageRequiresChallenge,
   SeekingAlphaSessionService,
   seekingAlphaSessionService,
 } from './seeking-alpha-session.service';
@@ -12,6 +14,16 @@ const QUANT_CONTAINER = '[data-test-id="card-container-quant-rating"]';
 const CARD_RATING = '[data-test-id="card-rating"]';
 const SYMBOL_PRICE = '[data-test-id="symbol-price"]';
 const POLL_INTERVAL_MS = 100;
+const MAX_DIAGNOSTIC_TEST_IDS = 24;
+const DIAGNOSTIC_SELECTORS = {
+  quantContainer: QUANT_CONTAINER,
+  cardRating: CARD_RATING,
+  symbolPrice: SYMBOL_PRICE,
+  quantTestId: '[data-test-id*="quant" i], [data-testid*="quant" i]',
+  ratingTestId: '[data-test-id*="rating" i], [data-testid*="rating" i]',
+  scoreTestId: '[data-test-id*="score" i], [data-testid*="score" i]',
+  priceTestId: '[data-test-id*="price" i], [data-testid*="price" i]',
+} as const;
 const RATING_BY_TEXT: Record<string, SeekingAlphaQuantRating> = {
   'STRONG SELL': 'STRONG_SELL',
   SELL: 'SELL',
@@ -21,6 +33,56 @@ const RATING_BY_TEXT: Record<string, SeekingAlphaQuantRating> = {
 };
 
 type ParsedQuantValues = Pick<SeekingAlphaQuantRatingResult, 'rating' | 'score' | 'observedPrice'>;
+
+type DiagnosticStage = 'container_wait' | 'hydration';
+
+const logSelectorDiagnostics = async (page: Page, stage: DiagnosticStage): Promise<void> => {
+  const selectorCounts = Object.fromEntries(
+    await Promise.all(
+      Object.entries(DIAGNOSTIC_SELECTORS).map(async ([name, selector]) => {
+        try {
+          return [name, await page.locator(selector).count()] as const;
+        } catch {
+          return [name, -1] as const;
+        }
+      })
+    )
+  );
+
+  let semanticTestIds: Record<string, number> = {};
+  try {
+    semanticTestIds = await page
+      .locator('[data-test-id], [data-testid]')
+      .evaluateAll((elements, limit) => {
+        const counts: Record<string, number> = {};
+        for (const element of elements) {
+          const testId =
+            element.getAttribute('data-test-id') ?? element.getAttribute('data-testid');
+          if (
+            testId &&
+            /(?:quant|rating|score|price)/i.test(testId) &&
+            /^(?=.{1,80}$)[a-z0-9][a-z0-9_-]*$/i.test(testId)
+          ) {
+            counts[testId] = (counts[testId] ?? 0) + 1;
+          }
+        }
+        return Object.fromEntries(
+          Object.entries(counts)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .slice(0, limit)
+        );
+      }, MAX_DIAGNOSTIC_TEST_IDS);
+  } catch {
+    // Diagnostics must never replace the bounded operation error.
+  }
+
+  logger.warn({
+    message: 'Seeking Alpha Quant selector diagnostics',
+    stage,
+    selectorCounts,
+    semanticTestIds,
+  });
+};
 
 export const normalizeTicker = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
@@ -103,9 +165,24 @@ export const extractQuantRating = async (
   timeoutMs: number = env.SEEKING_ALPHA_NAVIGATION_TIMEOUT_MS
 ): Promise<ParsedQuantValues> => {
   const container = page.locator(QUANT_CONTAINER);
-  try {
-    await container.waitFor({ state: 'visible', timeout: timeoutMs });
-  } catch {
+  const containerDeadline = Date.now() + timeoutMs;
+  let containerVisible = false;
+  while (Date.now() <= containerDeadline) {
+    try {
+      containerVisible = await container.isVisible();
+    } catch {
+      containerVisible = false;
+    }
+    if (containerVisible) break;
+    if (await pageRequiresChallenge(page)) {
+      throw new SeekingAlphaOperationError('CHALLENGE_REQUIRED');
+    }
+    if (Date.now() < containerDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  }
+  if (!containerVisible) {
+    await logSelectorDiagnostics(page, 'container_wait');
     throw new SeekingAlphaOperationError('SELECTOR_DRIFT');
   }
 
@@ -129,6 +206,10 @@ export const extractQuantRating = async (
   }
 
   if (!sawRatingElements || !sawPriceElement || sawUnexpectedValue) {
+    if (await pageRequiresChallenge(page)) {
+      throw new SeekingAlphaOperationError('CHALLENGE_REQUIRED');
+    }
+    await logSelectorDiagnostics(page, 'hydration');
     throw new SeekingAlphaOperationError('SELECTOR_DRIFT');
   }
   throw new SeekingAlphaOperationError('HYDRATION_TIMEOUT');

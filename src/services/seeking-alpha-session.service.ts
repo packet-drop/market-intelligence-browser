@@ -38,12 +38,16 @@ const result = (
   ...(reason ? { reason } : {}),
 });
 
-const pageRequiresChallenge = async (page: Page): Promise<boolean> => {
-  const title = (await page.title()).toLowerCase();
-  const body = (await page.locator('body').innerText({ timeout: 5000 })).toLowerCase();
-  return /captcha|verify you are human|unusual traffic|security challenge/.test(
-    `${title}\n${body}`
-  );
+export const pageRequiresChallenge = async (page: Page): Promise<boolean> => {
+  try {
+    const title = (await page.title()).toLowerCase();
+    const body = (await page.locator('body').innerText({ timeout: 5000 })).toLowerCase();
+    return /captcha|verify you are human|unusual traffic|security challenge|press\s*&\s*hold|enable javascript and cookies/.test(
+      `${title}\n${body}`
+    );
+  } catch {
+    return false;
+  }
 };
 
 const pageRequiresLogin = async (page: Page): Promise<boolean> =>

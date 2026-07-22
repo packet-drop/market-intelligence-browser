@@ -179,6 +179,18 @@ For each implementation pull request:
 
 Live authenticated checks must be opt-in and must not run in CI with production credentials.
 
+### Phase 2 production validation
+
+The opt-in production AAPL lookup on 2026-07-22 reached the approved Quant Rating destination but
+rendered Seeking Alpha's in-page `PRESS & HOLD` challenge without changing the top-level URL. The
+initial `SELECTOR_DRIFT` response was therefore a classification error, not evidence that the Quant
+selectors had changed. The operation now recognizes both the early and client-delayed forms of this
+challenge and returns `CHALLENGE_REQUIRED` without attempting to bypass it.
+
+The authenticated production page shape remains unconfirmed while Seeking Alpha presents the
+challenge. Repeat the opt-in lookup after manual verification succeeds; do not weaken challenge
+detection or add automated challenge handling.
+
 ## Out of scope
 
 - PostgreSQL schema and migrations

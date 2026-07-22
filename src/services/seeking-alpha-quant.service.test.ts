@@ -10,7 +10,8 @@ import { SeekingAlphaSessionService } from './seeking-alpha-session.service';
 const pageWithStates = (
   ratingStates: string[][],
   priceStates: string[][],
-  containerError?: Error
+  containerError?: Error,
+  bodyText = ''
 ): Page => {
   let ratingIndex = 0;
   let priceIndex = 0;
@@ -22,9 +23,9 @@ const pageWithStates = (
     }),
   };
   const container = {
-    waitFor: containerError
-      ? jest.fn().mockRejectedValue(containerError)
-      : jest.fn().mockResolvedValue(undefined),
+    isVisible: containerError
+      ? jest.fn().mockResolvedValue(false)
+      : jest.fn().mockResolvedValue(true),
     locator: jest.fn().mockReturnValue(ratings),
   };
   const price = {
@@ -36,9 +37,13 @@ const pageWithStates = (
   };
 
   return {
-    locator: jest.fn((selector: string) =>
-      selector.includes('card-container-quant-rating') ? container : price
-    ),
+    title: jest.fn().mockResolvedValue('AAPL Quant Rating'),
+    locator: jest.fn((selector: string) => {
+      if (selector === 'body') {
+        return { innerText: jest.fn().mockResolvedValue(bodyText) };
+      }
+      return selector.includes('card-container-quant-rating') ? container : price;
+    }),
   } as unknown as Page;
 };
 
@@ -98,6 +103,19 @@ describe('Seeking Alpha Quant extraction', () => {
     await expect(extractQuantRating(page, 1)).rejects.toEqual(
       new SeekingAlphaOperationError('SELECTOR_DRIFT')
     );
+  });
+
+  test('recognizes a delayed in-page challenge after the Quant container times out', async () => {
+    const page = pageWithStates(
+      [],
+      [],
+      new Error('locator timeout'),
+      'PRESS & HOLD\nPlease enable JavaScript and cookies.'
+    );
+
+    await expect(extractQuantRating(page, 1)).rejects.toMatchObject({
+      operationCode: 'CHALLENGE_REQUIRED',
+    });
   });
 
   test('rejects an out-of-range hydrated score as selector drift', async () => {
