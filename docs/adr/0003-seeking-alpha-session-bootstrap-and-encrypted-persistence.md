@@ -93,6 +93,14 @@ service creates the parent directory if needed and verifies it with an actual re
 probe whenever session use or import is enabled. Startup fails if persistence is misconfigured or
 unwritable.
 
+Railway mounts a volume after the image is built and initially owns the mount as root, which hides
+the `/data` ownership established in the image. The container therefore starts through a fixed,
+root-owned entrypoint that may change ownership and mode only for the dedicated `/data` volume. It
+sets `/data` to UID/GID `1001` with mode `0700`, applies a restrictive umask, and immediately replaces
+itself with the application process through `gosu`. Node and Chromium consequently run as the
+non-root `nodejs` user. Running the entire service with `RAILWAY_RUN_UID=0` is rejected because it
+would unnecessarily expand the browser process's privileges.
+
 `SEEKING_ALPHA_SESSION_ENCRYPTION_KEY` is a sealed Railway variable and must decode to exactly 32
 bytes. It must be backed up separately in an approved secret store: a volume backup is unusable
 without the key. There is no transparent key rotation in version 1. To rotate, disable source use,
@@ -178,6 +186,7 @@ when import is enabled. Production configuration remains invalid without `SERVIC
 - Railway never needs Seeking Alpha account credentials.
 - Session replacement requires both an independently scoped secret and an explicit temporary switch.
 - Persistent session material is confidential and authenticated at rest.
+- Root-owned Railway volume initialization does not require Node or Chromium to run as root.
 - Rolling cookie refreshes survive deployments without sharing browser contexts.
 - Expiry and challenges become explicit operational states rather than retry loops.
 - Navigation pacing, queue bounds, deduplication, and circuit breaking limit accidental upstream load.

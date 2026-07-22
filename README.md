@@ -135,6 +135,9 @@ The unit tests mock Playwright where appropriate. The e2e smoke test requires th
 - `/health` stays public for Railway health checks.
 - Production logs are structured JSON on stdout/stderr for Railway Deploy Logs; the service does not depend on container log files.
 - The Docker image installs the Chromium revision matching Playwright and runs as a non-root user.
+- Railway mounts `/data` as root. The container entrypoint restricts that dedicated volume to the
+  application user, then drops to UID/GID `1001` before starting Node or Chromium. Do not set
+  `RAILWAY_RUN_UID=0`; the entrypoint performs the narrowly scoped initialization itself.
 - Set `NODE_ENV=production` and `SERVICE_API_KEY` in Railway variables before deploying.
 - Mount a persistent volume at `/data` before enabling Seeking Alpha session support.
 - Keep the session encryption key in Railway variables and in a separate approved secret backup.
