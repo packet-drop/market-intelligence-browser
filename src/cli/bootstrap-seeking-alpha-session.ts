@@ -1,8 +1,25 @@
 import { BrowserContext, chromium } from 'playwright';
+import { spawn } from 'child_process';
+import { access, mkdtemp, rm } from 'fs/promises';
+import { createServer } from 'net';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { createInterface } from 'readline';
 
 const LOGIN_URL = 'https://seekingalpha.com/account/login';
 const IMPORT_PATH = '/api/admin/sources/seeking-alpha/session/import';
+const CHROME_PATHS = [
+  process.env.PLAYWRIGHT_CHROME_PATH,
+  process.env.PROGRAMFILES &&
+    join(process.env.PROGRAMFILES, 'Google/Chrome/Application/chrome.exe'),
+  process.env['PROGRAMFILES(X86)'] &&
+    join(process.env['PROGRAMFILES(X86)'], 'Google/Chrome/Application/chrome.exe'),
+  process.env.LOCALAPPDATA &&
+    join(process.env.LOCALAPPDATA, 'Google/Chrome/Application/chrome.exe'),
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+].filter((path): path is string => Boolean(path));
 
 type CapturedStorageState = Awaited<ReturnType<BrowserContext['storageState']>>;
 
@@ -24,6 +41,49 @@ const waitForEnter = (): Promise<void> => {
       }
     );
   });
+};
+
+const resolveChromePath = async (): Promise<string> => {
+  for (const path of CHROME_PATHS) {
+    try {
+      await access(path);
+      return path;
+    } catch {
+      // Try the next platform-specific installation path.
+    }
+  }
+  throw new Error(
+    'Google Chrome was not found; set PLAYWRIGHT_CHROME_PATH to the Chrome executable'
+  );
+};
+
+const reserveLocalPort = async (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Unable to reserve a local browser debugging port'));
+        return;
+      }
+      server.close((error) => (error ? reject(error) : resolve(address.port)));
+    });
+  });
+
+const waitForChrome = async (endpoint: string): Promise<void> => {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${endpoint}/json/version`);
+      if (response.ok) return;
+    } catch {
+      // Chrome has not opened its local debugging endpoint yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error('Timed out waiting for Google Chrome to start');
 };
 
 const resolveImportUrl = (serviceOrigin: string): URL => {
@@ -50,13 +110,29 @@ const main = async (): Promise<void> => {
   }
 
   const importUrl = resolveImportUrl(serviceOrigin);
-  const browser = await chromium.launch({ headless: false });
+  const chromePath = await resolveChromePath();
+  const profilePath = await mkdtemp(join(tmpdir(), 'seeking-alpha-bootstrap-'));
+  const debuggingPort = await reserveLocalPort();
+  const debuggingEndpoint = `http://127.0.0.1:${debuggingPort}`;
+  const chrome = spawn(
+    chromePath,
+    [
+      `--user-data-dir=${profilePath}`,
+      `--remote-debugging-port=${debuggingPort}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      LOGIN_URL,
+    ],
+    { stdio: 'ignore' }
+  );
+  let browser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | undefined;
   try {
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
+    await waitForChrome(debuggingEndpoint);
     await waitForEnter();
 
+    browser = await chromium.connectOverCDP(debuggingEndpoint);
+    const context = browser.contexts()[0];
+    if (!context) throw new Error('Chrome did not expose a browser context');
     const storageState = minimizeStorageState(await context.storageState());
     const response = await fetch(importUrl, {
       method: 'POST',
@@ -72,7 +148,9 @@ const main = async (): Promise<void> => {
     }
     process.stdout.write('Seeking Alpha session imported successfully.\n');
   } finally {
-    await browser.close();
+    await browser?.close();
+    chrome.kill();
+    await rm(profilePath, { force: true, maxRetries: 5, recursive: true, retryDelay: 200 });
   }
 };
 
