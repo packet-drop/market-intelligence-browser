@@ -132,6 +132,45 @@ describe('SeekingAlphaSessionService', () => {
     );
   });
 
+  test('recognizes the in-page Press & Hold challenge without relying on a redirect', async () => {
+    await store.save({ storageState, importedAt: '2026-07-21T00:00:00.000Z' });
+    const page = {
+      route: jest.fn().mockResolvedValue(undefined),
+      mainFrame: jest.fn().mockReturnValue({}),
+      goto: jest.fn().mockResolvedValue(undefined),
+      url: jest
+        .fn()
+        .mockReturnValue('https://seekingalpha.com/account/edit_price_alerts?tab=history'),
+      title: jest.fn().mockResolvedValue('Price Alerts'),
+      locator: jest.fn((selector: string) =>
+        selector === 'body'
+          ? {
+              innerText: jest
+                .fn()
+                .mockResolvedValue('PRESS & HOLD\nPlease enable JavaScript and cookies.'),
+            }
+          : { count: jest.fn().mockResolvedValue(0) }
+      ),
+    };
+    const context = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    (chromium.launch as jest.Mock).mockResolvedValue({
+      newContext: jest.fn().mockResolvedValue(context),
+      close: jest.fn().mockResolvedValue(undefined),
+    });
+    const service = new SeekingAlphaSessionService(
+      store,
+      true,
+      new SerializedOperationQueue(10, 0)
+    );
+
+    await expect(service.checkSession()).resolves.toEqual(
+      expect.objectContaining({ state: 'CHALLENGE_REQUIRED', reason: 'UPSTREAM_CHALLENGE' })
+    );
+  });
+
   test('normalizes browser failures without returning sensitive error details', async () => {
     (chromium.launch as jest.Mock).mockRejectedValue(
       new Error('navigation failed with cookie=do-not-return')
