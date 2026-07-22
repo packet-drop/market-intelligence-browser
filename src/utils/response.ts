@@ -25,11 +25,13 @@ export class ResponseBuilder {
     res: Response,
     error: string,
     statusCode: number = 500,
+    code?: string,
     meta?: Partial<ApiResponse['meta']>
   ): Response {
     const response: ApiResponse = {
       success: false,
       error,
+      ...(code ? { code } : {}),
       meta: {
         durationMs: Date.now() - (res.locals.startTime || Date.now()),
         timestamp: new Date().toISOString(),

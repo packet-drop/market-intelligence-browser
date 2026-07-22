@@ -75,18 +75,46 @@ Before implementation, record the chosen bootstrap and persistence design.
 
 ## Phase 2: Ticker price and Quant Rating
 
-- [ ] Add a protected, ticker-based Quant lookup operation.
-- [ ] Normalize and validate the ticker; do not accept a URL.
-- [ ] Construct `/symbol/{ticker}/ratings/quant-ratings` internally.
-- [ ] Wait for `card-container-quant-rating`.
-- [ ] Scope repeated `card-rating` lookups beneath the Quant container.
-- [ ] Reject placeholders, empty values, not-covered states, and incomplete hydration.
-- [ ] Validate the rating vocabulary.
-- [ ] Parse and range-check the numeric score.
-- [ ] Read hydrated `symbol-price`.
-- [ ] Return ticker, rating, score, observed price, canonical path, and observation time.
-- [ ] Provide explicit errors for session expiry, hydration timeout, unsupported state, and selector drift.
-- [ ] Add unit tests with delayed hydration and placeholder transitions.
+- [x] Add a protected, ticker-based Quant lookup operation.
+- [x] Normalize and validate the ticker; do not accept a URL.
+- [x] Construct `/symbol/{ticker}/ratings/quant-ratings` internally.
+- [x] Wait for `card-container-quant-rating`.
+- [x] Scope repeated `card-rating` lookups beneath the Quant container.
+- [x] Reject placeholders, empty values, not-covered states, and incomplete hydration.
+- [x] Validate the rating vocabulary.
+- [x] Parse and range-check the numeric score.
+- [x] Read hydrated `symbol-price`.
+- [x] Return ticker, rating, score, observed price, canonical path, and observation time.
+- [x] Provide explicit errors for session expiry, hydration timeout, unsupported state, and selector drift.
+- [x] Add unit tests with delayed hydration and placeholder transitions.
+
+### Phase 2 contract
+
+`POST /api/sources/seeking-alpha/quant-ratings/lookup` accepts a strict JSON body containing only
+`ticker`. The service trims and uppercases the value, then requires a 1–15 character symbol that
+starts with a letter and otherwise contains letters, digits, dots, or hyphens. It constructs the
+canonical path internally and rejects query parameters, unexpected redirects, and off-origin
+top-level navigation.
+
+The response normalizes the rating vocabulary to `STRONG_SELL`, `SELL`, `HOLD`, `BUY`, or
+`STRONG_BUY`. The score is a number from 1 through 5, and the observed price is a positive number.
+The operation returns only those values, the normalized ticker, canonical path, and observation
+timestamp; it never returns HTML or a caller/upstream URL.
+
+Phase 2 reuses the Phase 1 encrypted session store, isolated browser context, serialized operation
+queue, redirect classification, circuit breaker, and refreshed-state persistence. Its bounded error
+codes are:
+
+| Code                                                                    | HTTP status | Meaning                                                        |
+| ----------------------------------------------------------------------- | ----------- | -------------------------------------------------------------- |
+| `INVALID_TICKER`                                                        | `400`       | The request is not a supported ticker-only input               |
+| `SESSION_MISSING`                                                       | `409`       | No encrypted session is available                              |
+| `SESSION_EXPIRED`                                                       | `409`       | Seeking Alpha requires login                                   |
+| `CHALLENGE_REQUIRED`                                                    | `409`       | Manual verification is required                                |
+| `UNSUPPORTED_STATE`                                                     | `422`       | The ticker is explicitly not covered or not rated              |
+| `SELECTOR_DRIFT`                                                        | `502`       | Required page structure or hydrated value shape changed        |
+| `SOURCE_DISABLED`, `QUEUE_FULL`, `CIRCUIT_OPEN`, `UPSTREAM_UNAVAILABLE` | `503`       | The operation is unavailable without exposing upstream details |
+| `HYDRATION_TIMEOUT`                                                     | `504`       | Approved selectors remained incomplete or placeholders         |
 
 ## Phase 3: Quant alert-history ingestion
 

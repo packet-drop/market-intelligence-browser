@@ -16,9 +16,19 @@ jest.mock('./services/seeking-alpha-session.service', () => ({
   },
 }));
 
+jest.mock('./services/seeking-alpha-quant.service', () => {
+  const actual = jest.requireActual('./services/seeking-alpha-quant.service');
+  return {
+    ...actual,
+    seekingAlphaQuantService: { lookup: jest.fn() },
+  };
+});
+
 import { createApp } from './app';
 import env from './config/env';
 import { browserService } from './services/browser.service';
+import { seekingAlphaQuantService } from './services/seeking-alpha-quant.service';
+import { SeekingAlphaOperationError } from './services/seeking-alpha-operation-error';
 import { seekingAlphaSessionService } from './services/seeking-alpha-session.service';
 
 interface TestResponse {
@@ -39,6 +49,9 @@ describe('service API foundation', () => {
   const importSession = seekingAlphaSessionService.importSession as jest.MockedFunction<
     typeof seekingAlphaSessionService.importSession
   >;
+  const lookupQuantRating = seekingAlphaQuantService.lookup as jest.MockedFunction<
+    typeof seekingAlphaQuantService.lookup
+  >;
 
   beforeAll((done) => {
     server = createApp().listen(0, '127.0.0.1', () => {
@@ -55,6 +68,7 @@ describe('service API foundation', () => {
     runSmokeCheck.mockReset();
     checkSession.mockReset();
     importSession.mockReset();
+    lookupQuantRating.mockReset();
     env.SEEKING_ALPHA_SESSION_IMPORT_ENABLED = false;
     env.SEEKING_ALPHA_SESSION_ADMIN_KEY = undefined;
   });
@@ -219,5 +233,63 @@ describe('service API foundation', () => {
     expect(wrongBoundary.statusCode).toBe(401);
     expect(imported.statusCode).toBe(201);
     expect(importSession).toHaveBeenCalledWith(storageState);
+  });
+
+  test('protects and normalizes the ticker-based Quant Rating lookup', async () => {
+    lookupQuantRating.mockResolvedValue({
+      ticker: 'BRK.B',
+      rating: 'BUY',
+      score: 4.25,
+      observedPrice: 512.34,
+      canonicalPath: '/symbol/BRK.B/ratings/quant-ratings',
+      observedAt: '2026-07-22T00:00:00.000Z',
+    });
+
+    const unauthorized = await request('/api/sources/seeking-alpha/quant-ratings/lookup', {
+      method: 'POST',
+      body: { ticker: 'BRK.B' },
+    });
+    const invalid = await request('/api/sources/seeking-alpha/quant-ratings/lookup', {
+      method: 'POST',
+      authorization: 'Bearer test-service-api-key',
+      body: { ticker: '../account/login' },
+    });
+    const authorized = await request('/api/sources/seeking-alpha/quant-ratings/lookup', {
+      method: 'POST',
+      authorization: 'Bearer test-service-api-key',
+      body: { ticker: ' brk.b ' },
+    });
+
+    expect(unauthorized.statusCode).toBe(401);
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.body).toEqual(
+      expect.objectContaining({ success: false, code: 'INVALID_TICKER' })
+    );
+    expect(authorized.statusCode).toBe(200);
+    expect(authorized.body).toEqual(
+      expect.objectContaining({ success: true, data: expect.objectContaining({ ticker: 'BRK.B' }) })
+    );
+    expect(lookupQuantRating).toHaveBeenCalledTimes(1);
+    expect(lookupQuantRating).toHaveBeenCalledWith('BRK.B');
+  });
+
+  test('returns bounded Quant lookup error codes without upstream details', async () => {
+    lookupQuantRating.mockRejectedValue(new SeekingAlphaOperationError('SESSION_EXPIRED'));
+
+    const response = await request('/api/sources/seeking-alpha/quant-ratings/lookup', {
+      method: 'POST',
+      authorization: 'Bearer test-service-api-key',
+      body: { ticker: 'AAPL' },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'Seeking Alpha session has expired',
+        code: 'SESSION_EXPIRED',
+      })
+    );
+    expect(JSON.stringify(response.body)).not.toContain('seekingalpha.com');
   });
 });

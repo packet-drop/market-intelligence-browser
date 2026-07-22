@@ -19,7 +19,7 @@ export const errorMiddleware = (
   });
 
   if (error instanceof HttpError) {
-    return buildResponse.error(res, error.message, error.statusCode);
+    return buildResponse.error(res, error.message, error.statusCode, error.code);
   }
 
   const statusCode = 500;

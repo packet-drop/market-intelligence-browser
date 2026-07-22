@@ -33,4 +33,24 @@ test.describe('API authentication', () => {
       })
     );
   });
+
+  test('validates Quant Rating tickers without accepting navigation input', async ({ request }) => {
+    const invalid = await request.post('/api/sources/seeking-alpha/quant-ratings/lookup', {
+      headers: { Authorization: `Bearer ${serviceApiKey}` },
+      data: { ticker: '../account/login' },
+    });
+    expect(invalid.status()).toBe(400);
+    await expect(invalid.json()).resolves.toEqual(
+      expect.objectContaining({ success: false, code: 'INVALID_TICKER' })
+    );
+
+    const disabled = await request.post('/api/sources/seeking-alpha/quant-ratings/lookup', {
+      headers: { Authorization: `Bearer ${serviceApiKey}` },
+      data: { ticker: 'AAPL' },
+    });
+    expect(disabled.status()).toBe(503);
+    await expect(disabled.json()).resolves.toEqual(
+      expect.objectContaining({ success: false, code: 'SOURCE_DISABLED' })
+    );
+  });
 });
